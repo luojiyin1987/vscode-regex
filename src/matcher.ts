@@ -20,9 +20,34 @@ export interface MatchOptions {
     timeoutMs?: number;
 }
 
-const DEFAULT_MAX_INPUT_LENGTH = 1_000_000;
+export const DEFAULT_MAX_INPUT_LENGTH = 1_000_000;
 const DEFAULT_MAX_MATCHES = 10_000;
 const DEFAULT_TIMEOUT_MS = 250;
+
+export function readTextForMatching(
+    readPrefix: (maxLength: number) => string,
+    maxInputLength = DEFAULT_MAX_INPUT_LENGTH,
+): string {
+    return readPrefix(maxInputLength + 1);
+}
+
+export function describeMatchStatus(result: Pick<MatchResult, 'status'>): string | undefined {
+    switch (result.status) {
+        case 'input-limit':
+            return 'Preview skipped: the document exceeds the input limit.';
+        case 'match-limit':
+            return 'Preview truncated: the match limit was reached.';
+        case 'timeout':
+            return 'Preview stopped: regular expression evaluation timed out.';
+        case 'unsupported':
+            return 'Preview unavailable: this environment cannot create a worker.';
+        case 'worker-error':
+            return 'Preview stopped: the matching worker failed.';
+        case 'cancelled':
+        case 'complete':
+            return undefined;
+    }
+}
 
 export async function findRegexMatches(regex: RegExp, text: string, options: MatchOptions = {}): Promise<MatchResult> {
     const matches: MatchSpan[] = [];

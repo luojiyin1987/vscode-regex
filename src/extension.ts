@@ -6,7 +6,7 @@
 
 import * as vscode from 'vscode';
 import { registerChatParticipant } from './chat';
-import { findRegexMatches } from './matcher';
+import { describeMatchStatus, findRegexMatches, MatchResult, readTextForMatching } from './matcher';
 
 declare type IntervalToken = object;
 declare function setInterval(fn: () => void, delay: number): IntervalToken;
@@ -20,6 +20,9 @@ export function activate(context: vscode.ExtensionContext) {
     const haxeRegexRegex = /(^|\s|[()={},:?;])(~\/((?:\\\/|\[[^\]]*\]|[^/])+)\/([gimsu]*))(\s|[.()={},:?;]|$)/g;
     const regexHighlight = vscode.window.createTextEditorDecorationType({ backgroundColor: 'rgba(100,100,100,.35)' });
     const matchHighlight = vscode.window.createTextEditorDecorationType({ backgroundColor: 'rgba(255,255,0,.35)' });
+    const matchOutput = vscode.window.createOutputChannel('Regex Previewer');
+    const reportedMatchStatuses = new Map<string, MatchResult['status']>();
+    context.subscriptions.push(matchOutput);
 
     const matchesFileContent = `Lorem ipsum dolor sit amet, consectetur adipiscing elit,
 sed do eiusmod tempor incididunt ut labore et dolore magna
@@ -178,6 +181,13 @@ https://github.com/chrmarti/vscode-regex
         range: vscode.Range;
     }
 
+    interface DecoratedMatchResult {
+
+        status: MatchResult['status'];
+
+        matches: Match[];
+    }
+
     class RegexMatchDecorator {
 
         private stableRegexEditor?: vscode.TextEditor;
@@ -258,13 +268,14 @@ https://github.com/chrmarti/vscode-regex
                 regexEditor.setDecorations(regexHighlight, (this.stableRegexMatch || regexEditor !== vscode.window.activeTextEditor) && regex ? [ regex.range ] : []);
             }
 
-            const matches = regex && regexEditor !== this.matchEditor
+            const result: DecoratedMatchResult = regex && regexEditor !== this.matchEditor
                 ? await findMatches(regex, this.matchEditor.document, updateCancellation.token)
-                : [];
+                : { status: 'complete', matches: [] };
             if (updateVersion !== this.updateVersion) {
                 return;
             }
-            this.matchEditor.setDecorations(matchHighlight, matches.map(match => match.range));
+            this.matchEditor.setDecorations(matchHighlight, result.matches.map(match => match.range));
+            reportMatchStatus(result, this.matchEditor.document);
             updateCancellation.dispose();
             this.updateCancellation = undefined;
         }
@@ -339,11 +350,36 @@ https://github.com/chrmarti/vscode-regex
     }
 
     async function findMatches(regexMatch: RegexMatch, document: vscode.TextDocument, token: vscode.CancellationToken) {
-        const text = document.getText();
+        const text = readTextForMatching(maxLength => {
+            const end = document.positionAt(maxLength);
+            return document.getText(new vscode.Range(new vscode.Position(0, 0), end));
+        });
         const regex = addGM(regexMatch.regex);
         const result = await findRegexMatches(regex, text, { cancellationToken: token });
-        return result.matches.map<Match>(match => ({
-            range: new vscode.Range(document.positionAt(match.start), document.positionAt(match.end))
-        }));
+        return {
+            status: result.status,
+            matches: result.matches.map<Match>(match => ({
+                range: new vscode.Range(document.positionAt(match.start), document.positionAt(match.end))
+            })),
+        };
+    }
+
+    function reportMatchStatus(result: DecoratedMatchResult, document: vscode.TextDocument) {
+        const key = document.uri.toString();
+        const message = describeMatchStatus(result);
+        if (!message) {
+            if (result.status === 'complete') {
+                reportedMatchStatuses.delete(key);
+            }
+            return;
+        }
+        if (reportedMatchStatuses.get(key) === result.status) {
+            return;
+        }
+
+        reportedMatchStatuses.set(key, result.status);
+        const outputMessage = `Regex Previewer: ${message} (${key})`;
+        matchOutput.appendLine(`[${new Date().toISOString()}] ${outputMessage}`);
+        vscode.window.setStatusBarMessage(outputMessage, 5000);
     }
 }

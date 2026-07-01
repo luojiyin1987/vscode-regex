@@ -3,7 +3,11 @@ const { execFile } = require('node:child_process');
 const test = require('node:test');
 const { promisify } = require('node:util');
 
-const { findRegexMatches } = require('../out/matcher');
+const {
+    describeMatchStatus,
+    findRegexMatches,
+    readTextForMatching,
+} = require('../out/matcher');
 const execFileAsync = promisify(execFile);
 
 test('finds every match for a global regular expression', async () => {
@@ -58,6 +62,33 @@ test('does not evaluate text beyond the configured input limit', async () => {
         status: 'input-limit',
         matches: [],
     });
+});
+
+test('reads at most one character beyond the input limit', () => {
+    let requestedLength;
+    const text = readTextForMatching(length => {
+        requestedLength = length;
+        return 'a'.repeat(length);
+    }, 3);
+
+    assert.equal(requestedLength, 4);
+    assert.equal(text, 'aaaa');
+});
+
+test('describes every actionable non-success status', () => {
+    const expectedMessages = new Map([
+        ['input-limit', 'Preview skipped: the document exceeds the input limit.'],
+        ['match-limit', 'Preview truncated: the match limit was reached.'],
+        ['timeout', 'Preview stopped: regular expression evaluation timed out.'],
+        ['unsupported', 'Preview unavailable: this environment cannot create a worker.'],
+        ['worker-error', 'Preview stopped: the matching worker failed.'],
+    ]);
+
+    for (const [status, message] of expectedMessages) {
+        assert.equal(describeMatchStatus({ status, matches: [] }), message);
+    }
+    assert.equal(describeMatchStatus({ status: 'cancelled', matches: [] }), undefined);
+    assert.equal(describeMatchStatus({ status: 'complete', matches: [] }), undefined);
 });
 
 test('times out catastrophic backtracking without blocking the caller', async () => {
