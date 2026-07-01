@@ -73,6 +73,16 @@ Bugfixes.
 
 Initial release.
 
+## Development
+
+Install the locked dependencies with Yarn 1 and run the compile-and-test check:
+
+```bash
+corepack prepare yarn@1.22.22 --activate
+yarn install --frozen-lockfile
+npm test
+```
+
 ## License
 
 [MIT](LICENSE)

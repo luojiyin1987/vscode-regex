@@ -6,6 +6,7 @@
 
 import * as vscode from 'vscode';
 import { registerChatParticipant } from './chat';
+import { findRegexMatches } from './matcher';
 
 declare type IntervalToken = object;
 declare function setInterval(fn: () => void, delay: number): IntervalToken;
@@ -182,6 +183,8 @@ https://github.com/chrmarti/vscode-regex
         private stableRegexEditor?: vscode.TextEditor;
         private stableRegexMatch?: RegexMatch;
         private disposables: vscode.Disposable[] = [];
+        private updateCancellation?: vscode.CancellationTokenSource;
+        private updateVersion = 0;
 
         constructor(private matchEditor: vscode.TextEditor) {
 
@@ -225,13 +228,22 @@ https://github.com/chrmarti/vscode-regex
         }
 
         public dispose() {
+            this.updateVersion++;
+            this.updateCancellation?.cancel();
+            this.updateCancellation?.dispose();
+            this.updateCancellation = undefined;
             discardDecorator(this.matchEditor);
             this.disposables.forEach(disposable => {
                 disposable.dispose();
             });
         }
 
-        public update() {
+        public async update() {
+            const updateVersion = ++this.updateVersion;
+            this.updateCancellation?.cancel();
+            this.updateCancellation?.dispose();
+            const updateCancellation = new vscode.CancellationTokenSource();
+            this.updateCancellation = updateCancellation;
             const regexEditor = this.stableRegexEditor = findRegexEditor() || this.stableRegexEditor;
             let regex = regexEditor && findRegexAtCaret(regexEditor);
             if (this.stableRegexMatch) {
@@ -241,12 +253,20 @@ https://github.com/chrmarti/vscode-regex
                     regex = this.stableRegexMatch;
                 }
             }
-            const matches = regex && regexEditor !== this.matchEditor ? findMatches(regex, this.matchEditor.document) : [];
-            this.matchEditor.setDecorations(matchHighlight, matches.map(match => match.range));
 
             if (regexEditor) {
                 regexEditor.setDecorations(regexHighlight, (this.stableRegexMatch || regexEditor !== vscode.window.activeTextEditor) && regex ? [ regex.range ] : []);
             }
+
+            const matches = regex && regexEditor !== this.matchEditor
+                ? await findMatches(regex, this.matchEditor.document, updateCancellation.token)
+                : [];
+            if (updateVersion !== this.updateVersion) {
+                return;
+            }
+            this.matchEditor.setDecorations(matchHighlight, matches.map(match => match.range));
+            updateCancellation.dispose();
+            this.updateCancellation = undefined;
         }
     }
 
@@ -318,20 +338,12 @@ https://github.com/chrmarti/vscode-regex
             }
     }
 
-    function findMatches(regexMatch: RegexMatch, document: vscode.TextDocument) {
+    async function findMatches(regexMatch: RegexMatch, document: vscode.TextDocument, token: vscode.CancellationToken) {
         const text = document.getText();
-        const matches: Match[] = [];
         const regex = addGM(regexMatch.regex);
-        let match: RegExpExecArray | null;
-        while ((regex.global || !matches.length) && (match = regex.exec(text))) {
-            matches.push({
-                range: new vscode.Range(document.positionAt(match.index), document.positionAt(match.index + match[0].length))
-            });
-            // Handle empty matches (fixes #4)
-            if (regex.lastIndex === match.index) {
-                regex.lastIndex++;
-            }
-        }
-        return matches;
+        const result = await findRegexMatches(regex, text, { cancellationToken: token });
+        return result.matches.map<Match>(match => ({
+            range: new vscode.Range(document.positionAt(match.start), document.positionAt(match.end))
+        }));
     }
 }

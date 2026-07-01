@@ -121,6 +121,7 @@
     "vscode:prepublish": "yarn run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
+    "test": "npm run compile && node --test test/matcher.test.js",
     "package": "vsce package",
     "publish": "vsce publish"
   },
